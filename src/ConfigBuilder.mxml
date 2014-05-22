@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009"
+					   xmlns:s="library://ns.adobe.com/flex/spark"
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   width="440" height="460" creationComplete="windowedapplication1_creationCompleteHandler(event)">
+	
+	<fx:Script>
+		<![CDATA[
+			import air.update.ApplicationUpdaterUI;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			import mx.events.CloseEvent;
+			import mx.events.FlexEvent;
+			
+			import spark.collections.Sort;
+			import spark.collections.SortField;
+			
+			import update.AirUpdate;
+			/** 关于按钮处理 */
+			protected function btnAbout_clickHandler(event:MouseEvent):void
+			{
+				var about:String = "ConfigBuilder 用于将多个配置文件压缩成一个文件，方便在网络应用中使用。\n\n" +
+					"导出说明：\n" +
+					"* 设置想要压缩的配置文件所在的相对路径。\n" +
+					"* 拖拽配置文件到界面中。\n" +
+					"* 点击导出即可。\n\n" +
+					"导入说明：\n" +
+					"* 点击导入按钮选择已压缩的文件即可重新编辑删除或导入新的配置文件。\n" +
+					"* 考虑到多人开发使用版本管理软件的情况，在另外的机器上再次导入已压缩文件，需要自行设置相对路径和指定导出文件路径。\n\n" +
+					"如发现问题或有相关建议，请联系：bindiry@gmail.com\n";
+				
+				Alert.show(about, "帮助");
+			}
+			
+			/** 初始化完成事件 */
+			protected function windowedapplication1_creationCompleteHandler(event:FlexEvent):void
+			{
+				var appUpdater:ApplicationUpdaterUI = new ApplicationUpdaterUI();
+				nativeWindow.title = "ConfigBuilder "+appUpdater.currentVersion;
+				// 检查更新
+				new AirUpdate().checkUpdate();
+				
+				// 开启拖拽文件支持
+				this.addEventListener(NativeDragEvent.NATIVE_DRAG_ENTER, onDrop);
+				this.addEventListener(NativeDragEvent.NATIVE_DRAG_DROP, onDrop);
+				
+				// 设置状态栏字体样式
+				statusText.setStyle('fontSize', 12);
+				
+				// 检查并初始化相对路径
+				var rPath:String = Common.getCookie(Common.COOKIE_NAME_RPATH);
+				if (rPath)
+				{
+					FileHandler.getInstance().relativePath = rPath;
+					txtRelativePath.text = rPath;
+				}
+				
+				// 检查并初始化导出路径
+				var exportPath:String = Common.getCookie(Common.COOKIE_NAME_EXPORT);
+				if (exportPath)
+				{
+					statusText.text = Common.exportPathLabelText + exportPath;
+					FileHandler.getInstance().exportPath = exportPath;
+					// 检查并初始化文件列表
+					tabFiles.dataProvider = FileHandler.getInstance().openExportFile(exportPath);
+					refreshTable();
+				}
+			}
+			
+			/** 拖拽响应事件 */
+			protected function onDrop(e:NativeDragEvent):void
+			{
+				if (e.type == NativeDragEvent.NATIVE_DRAG_ENTER)
+				{
+					NativeDragManager.acceptDragDrop(this);
+				}
+				
+				if (e.type == NativeDragEvent.NATIVE_DRAG_DROP)
+				{
+					if (!FileHandler.getInstance().relativePath)
+					{
+						Alert.show("请先设置配置文件所在的相对路径", "缺少相对路径");
+						return;
+					}
+					var dropfiles:Array = e.clipboard.getData(ClipboardFormats.FILE_LIST_FORMAT) as Array;
+					if (!FileHandler.getInstance().checkDropFiles(dropfiles))
+					{
+						Alert.show("文件不存在相对路径中,请重新选择", "提示");
+						return;
+					}
+					
+					tabFiles.dataProvider = FileHandler.getInstance().dropFileHandler(dropfiles);
+					refreshTable();
+				}
+			}
+			
+			/** 相对路径浏览设置 */
+			protected function btnBrowse_clickHandler(event:MouseEvent):void
+			{
+				FileUtil.browseForOpen(onSelect, 3, null, "选择相对路径（文件夹）");
+			}
+			
+			/** 选择相对路径后的处理 */
+			protected function onSelect(pFile:File):void
+			{
+				FileHandler.getInstance().relativePath = pFile.nativePath + "\\";
+				txtRelativePath.text = FileHandler.getInstance().relativePath;
+				Common.saveCookie(Common.COOKIE_NAME_RPATH, FileHandler.getInstance().relativePath);
+				refreshTable();
+			}
+			
+			/** 刷新表格状态 */
+			protected function refreshTable():void
+			{
+				var s:Sort = new Sort();
+				var sf:SortField = new SortField("filename", false, false);
+				s.fields = [sf];
+				(tabFiles.dataProvider as ArrayCollection).sort = s;
+				(tabFiles.dataProvider as ArrayCollection).refresh();
+			}
+			
+			/** 移除选定的文件 */
+			protected function btnRemove_clickHandler(event:MouseEvent):void
+			{
+				var selectedFiles:Vector.<Object> = tabFiles.selectedItems;
+				tabFiles.dataProvider = FileHandler.getInstance().removeSelectedFiles(selectedFiles);
+			}
+			
+			/** 清空所有文件 */
+			protected function btnClear_clickHandler(event:MouseEvent):void
+			{
+				Alert.show("是否确定要清空所有文件？", "警告", Alert.YES | Alert.NO, null, clearCloseHandler);
+			}
+			
+			/** 清空所有文件的回调 */
+			private function clearCloseHandler(e:CloseEvent):void
+			{
+				if (e.detail == Alert.YES)
+				{
+					tabFiles.dataProvider = FileHandler.getInstance().clearAllFiles();
+				}
+			}
+			
+			/** 导出文件 */
+			protected function btnExport_clickHandler(event:MouseEvent):void
+			{
+				FileHandler.getInstance().export(function(pExportPath:String):void {
+					statusText.text = Common.exportPathLabelText + pExportPath;
+					Alert.show("导出完成", "提示");
+				});
+			}
+			
+			/** 导入按钮事件处理 */
+			protected function btnImport_clickHandler(event:MouseEvent):void
+			{
+				FileHandler.getInstance().importFile(function(pData:ArrayCollection):void {
+					tabFiles.dataProvider = pData;
+				});
+			}
+			
+		]]>
+	</fx:Script>
+	
+	<fx:Declarations>
+		<!-- 将非可视元素（例如服务、值对象）放在此处 -->
+	</fx:Declarations>
+	<s:DataGrid id="tabFiles" left="10" right="10" top="39" bottom="38" horizontalCenter="0"
+				requestedRowCount="4" verticalCenter="0" selectionMode="multipleRows">
+		<s:columns>
+			<mx:ArrayList>
+				<s:GridColumn minWidth="100" dataField="filename" headerText="文件名"></s:GridColumn>
+				<s:GridColumn width="100" minWidth="100" maxWidth="100" dataField="type" headerText="类型"></s:GridColumn>
+			</mx:ArrayList>
+		</s:columns>
+		<mx:ArrayList></mx:ArrayList>
+	</s:DataGrid>
+	<s:Button id="btnRemove" left="10" bottom="9" width="80" label="移除选定"
+			  click="btnRemove_clickHandler(event)"/>
+	<s:Button id="btnClear" left="98" bottom="9" width="80" height="21" label="清空所有"
+			  click="btnClear_clickHandler(event)"/>
+	<s:Button id="btnExport" right="10" bottom="9" width="80" label="导出"
+			  click="btnExport_clickHandler(event)"/>
+	<s:Button id="btnImport" right="98" bottom="9" width="80" label="导入"
+			  click="btnImport_clickHandler(event)"/>
+	<s:Button id="btnAbout" bottom="9" label="帮助" click="btnAbout_clickHandler(event)"
+			  horizontalCenter="0"/>
+	<s:Label left="10" top="10" width="60" height="22" text="相对路径:" textAlign="center"
+			 verticalAlign="middle"/>
+	<s:TextInput id="txtRelativePath" left="71" right="102" top="10" enabled="false"/>
+	<s:Button id="btnBrowse" right="10" top="10" width="84" label="浏览..."
+			  click="btnBrowse_clickHandler(event)"/>
+</s:WindowedApplication>
